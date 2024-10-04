@@ -6,8 +6,12 @@ class AuthService {
       required String password,
       required String confirm}) async {
     try {
-      //check password == confirm
+      // Check if password matches confirm password
+      if (password != confirm) {
+        return 'Passwords do not match';
+      }
 
+      // Proceed with user creation
       await FirebaseAuth.instance
           .createUserWithEmailAndPassword(email: email, password: password);
       return 'success';

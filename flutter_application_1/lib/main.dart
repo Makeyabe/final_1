@@ -2,10 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart'; // Import Firebase core
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_application_1/screen/signin_screen.dart'; // Import Firestore
+import 'package:intl/intl.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(); // Initialize Firebase
+  await Firebase.initializeApp();
   runApp(const MainApp());
 }
 
@@ -17,10 +18,12 @@ class MainApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
+        colorScheme: ColorScheme.fromSeed(
+            seedColor: const Color.fromARGB(255, 5, 178, 77)),
         useMaterial3: true,
       ),
-      home: const SigninScreen(),
+      home:
+          const SigninScreen(), // เปลี่ยนเป็น TodaApp เพื่อให้เป็นหน้าเริ่มต้น
     );
   }
 }
@@ -34,177 +37,298 @@ class TodaApp extends StatefulWidget {
 
 class _TodaAppState extends State<TodaApp> {
   late TextEditingController _titleController;
-  late TextEditingController _detailController;
-  final CollectionReference tasks =
-      FirebaseFirestore.instance.collection('tasks');
+  late TextEditingController _descriptionController;
+  late TextEditingController _amountController;
+  String _selectedType = 'Expense'; // Default to expense
+  DateTime? _selectedDate;
 
   @override
   void initState() {
     super.initState();
     _titleController = TextEditingController();
-    _detailController = TextEditingController();
+    _descriptionController = TextEditingController();
+    _amountController = TextEditingController();
   }
 
-  // ฟังก์ชันสร้างรายการใหม่
-  Future<void> addTodoHandle(BuildContext context) async {
+  void addTodoHandle(BuildContext context, [DocumentSnapshot? doc]) {
+    if (doc != null) {
+      _titleController.text = doc['name'];
+      _descriptionController.text = doc['detail'];
+      _amountController.text = doc['amount'].toString();
+      _selectedType = doc['type'];
+      _selectedDate = (doc['date'] as Timestamp).toDate();
+    } else {
+      _titleController.clear();
+      _descriptionController.clear();
+      _amountController.clear();
+      _selectedType = 'Expense';
+      _selectedDate = null;
+    }
+
     showDialog(
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text("เพิ่มรายการใหม่"),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: _titleController,
-                decoration: const InputDecoration(
-                    border: OutlineInputBorder(), labelText: "ชื่อหัวข้อ"),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: _detailController,
-                decoration: const InputDecoration(
-                    border: OutlineInputBorder(), labelText: "รายละเอียด"),
-              ),
-            ],
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(15),
+          ),
+          title: Text(
+            doc != null ? "Edit Entry" : "Add Entry",
+            style: const TextStyle(fontWeight: FontWeight.bold),
+          ),
+          content: SizedBox(
+            width: 300,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: _titleController,
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                    labelText: "Title",
+                    prefixIcon: Icon(Icons.title),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: _descriptionController,
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                    labelText: "Description",
+                    prefixIcon: Icon(Icons.description),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: _amountController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                    labelText: "Amount",
+                    prefixIcon: Icon(Icons.attach_money),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                DropdownButtonFormField<String>(
+                  value: _selectedType,
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                    labelText: "Type",
+                  ),
+                  items: ['Income', 'Expense']
+                      .map((type) => DropdownMenuItem(
+                            value: type,
+                            child: Text(type),
+                          ))
+                      .toList(),
+                  onChanged: (value) {
+                    setState(() {
+                      _selectedType = value!;
+                    });
+                  },
+                ),
+                const SizedBox(height: 16),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(_selectedDate == null
+                      ? "Select Date"
+                      : DateFormat('yyyy-MM-dd').format(_selectedDate!)),
+                  trailing: const Icon(Icons.calendar_today),
+                  onTap: () async {
+                    DateTime? pickedDate = await showDatePicker(
+                      context: context,
+                      initialDate: DateTime.now(),
+                      firstDate: DateTime(2000),
+                      lastDate: DateTime(2101),
+                    );
+                    if (pickedDate != null) {
+                      setState(() {
+                        _selectedDate = pickedDate;
+                      });
+                    }
+                  },
+                ),
+              ],
+            ),
           ),
           actions: [
             TextButton(
-              onPressed: () async {
-                await tasks.add({
-                  'name': _titleController.text,
-                  'note': _detailController.text,
-                  'status': false, // ค่าเริ่มต้นเป็น false (ยังไม่เสร็จ)
-                });
-                _titleController.clear();
-                _detailController.clear();
+              onPressed: () {
                 Navigator.pop(context);
               },
-              child: const Text("บันทึก"),
-            )
+              child: const Text("Cancel"),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                if (_titleController.text.isEmpty ||
+                    _amountController.text.isEmpty ||
+                    _selectedDate == null) {
+                  return;
+                }
+
+                double amount = double.parse(_amountController.text);
+
+                if (doc != null) {
+                  FirebaseFirestore.instance
+                      .collection("tasks")
+                      .doc(doc.id)
+                      .update({
+                    'name': _titleController.text,
+                    'detail': _descriptionController.text,
+                    'amount': amount,
+                    'type': _selectedType,
+                    'date': _selectedDate,
+                  }).then((_) {
+                    print("Entry updated");
+                  }).catchError((onError) {
+                    print("Failed to update entry");
+                  });
+                } else {
+                  FirebaseFirestore.instance.collection("tasks").add({
+                    'name': _titleController.text,
+                    'detail': _descriptionController.text,
+                    'amount': amount,
+                    'type': _selectedType,
+                    'date': _selectedDate,
+                    'status': false,
+                  }).then((_) {
+                    print("Entry added");
+                  }).catchError((onError) {
+                    print("Failed to add entry");
+                  });
+                }
+
+                Navigator.pop(context);
+              },
+              child: const Text("Save"),
+            ),
           ],
         );
       },
     );
   }
 
-  // ฟังก์ชันแก้ไขข้อมูล
-  Future<void> editTodoHandle(BuildContext context, String id,
-      String currentName, String currentNote, bool currentStatus) async {
-    _titleController.text = currentName;
-    _detailController.text = currentNote;
-    bool _isChecked = currentStatus; // สร้างตัวแปรเพื่อเก็บสถานะ
-
-    showDialog(
-      context: context,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setState) {
-            return AlertDialog(
-              title: const Text("แก้ไขรายการ"),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    controller: _titleController,
-                    decoration: const InputDecoration(
-                        border: OutlineInputBorder(), labelText: "ชื่อหัวข้อ"),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: _detailController,
-                    decoration: const InputDecoration(
-                        border: OutlineInputBorder(), labelText: "รายละเอียด"),
-                  ),
-                  const SizedBox(height: 10),
-                  CheckboxListTile(
-                    title: const Text("ทำเสร็จแล้ว"),
-                    value: _isChecked,
-                    onChanged: (bool? newValue) {
-                      setState(() {
-                        _isChecked = newValue!; // อัพเดตสถานะ
-                      });
-                    },
-                  ),
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () async {
-                    await tasks.doc(id).update({
-                      'name': _titleController.text,
-                      'note': _detailController.text,
-                      'status': _isChecked, // อัพเดตสถานะ
-                    });
-                    _titleController.clear();
-                    _detailController.clear();
-                    Navigator.pop(context);
-                  },
-                  child: const Text("บันทึก"),
-                )
-              ],
-            );
-          },
-        );
-      },
-    );
+  void deleteTask(String id) {
+    FirebaseFirestore.instance.collection("tasks").doc(id).delete().then((_) {
+      print("Task deleted");
+    }).catchError((onError) {
+      print("Failed to delete task");
+    });
   }
 
-  // ฟังก์ชันลบรายการ
-  Future<void> deleteTodoHandle(String id) async {
-    await tasks.doc(id).delete();
+  void toggleStatus(String id, bool status) {
+    FirebaseFirestore.instance.collection("tasks").doc(id).update({
+      'status': !status,
+    }).then((_) {
+      print("Task status updated");
+    }).catchError((onError) {
+      print("Failed to update task status");
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("TODO MAKE TODO"),
+        title: const Text(
+          "Todo",
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+        centerTitle: true,
       ),
-      body: StreamBuilder(
-        stream: tasks.snapshots(), // ดึงข้อมูลจาก Firestore แบบเรียลไทม์
-        builder: (context, AsyncSnapshot<QuerySnapshot> snapshot) {
-          if (!snapshot.hasData) {
+      body: StreamBuilder<QuerySnapshot>(
+        stream: FirebaseFirestore.instance.collection("tasks").snapshots(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
           }
+          if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+            return const Center(child: Text("ไม่มีงาน"));
+          }
 
-          return ListView(
-            children: snapshot.data!.docs.map((doc) {
-              return ListTile(
-                title: Text(doc['name']),
-                subtitle: Text(doc['note']),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
+          double totalIncome = 0.0;
+          double totalExpense = 0.0;
+
+          // คำนวณยอดรวม
+          for (var task in snapshot.data!.docs) {
+            if (task['type'] == 'Income') {
+              totalIncome += task['amount'];
+            } else if (task['type'] == 'Expense') {
+              totalExpense += task['amount'];
+            }
+          }
+
+          return Column(
+            children: [
+              // แสดงยอดรวม
+              Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    IconButton(
-                      icon: const Icon(Icons.edit, color: Colors.grey),
-                      onPressed: () {
-                        editTodoHandle(
-                          context,
-                          doc.id,
-                          doc['name'],
-                          doc['note'],
-                          doc['status'],
-                        );
-                      },
+                    Text(
+                      'รายรับรวม: \$${totalIncome.toStringAsFixed(2)}',
+                      style: const TextStyle(
+                          fontSize: 18, fontWeight: FontWeight.bold),
                     ),
-                    IconButton(
-                      icon: const Icon(Icons.delete, color: Colors.red),
-                      onPressed: () {
-                        deleteTodoHandle(doc.id);
-                      },
+                    Text(
+                      'รายจ่ายรวม: \$${totalExpense.toStringAsFixed(2)}',
+                      style: const TextStyle(
+                          fontSize: 18, fontWeight: FontWeight.bold),
                     ),
                   ],
                 ),
-                leading: Checkbox(
-                  value: doc['status'],
-                  onChanged: (bool? value) {
-                    tasks.doc(doc.id).update({'status': value});
+              ),
+              // รายการงาน
+              Expanded(
+                child: ListView.builder(
+                  itemCount: snapshot.data?.docs.length,
+                  itemBuilder: (context, index) {
+                    var task = snapshot.data!.docs[index];
+                    return Card(
+                      margin: const EdgeInsets.symmetric(
+                          vertical: 8.0, horizontal: 16.0),
+                      elevation: 5,
+                      child: ListTile(
+                        contentPadding: const EdgeInsets.all(16),
+                        title: Text(
+                          task['name'],
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        subtitle: Text(task['detail']),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              icon: Icon(
+                                task['status']
+                                    ? Icons.check_box
+                                    : Icons.check_box_outline_blank,
+                                color: task['status']
+                                    ? Color.fromARGB(255, 227, 40, 102)
+                                    : Color.fromARGB(255, 206, 19, 19),
+                              ),
+                              onPressed: () =>
+                                  toggleStatus(task.id, task['status']),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.edit,
+                                  color: Color.fromARGB(255, 127, 195, 125)),
+                              onPressed: () => addTodoHandle(context, task),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.delete, color: Colors.red),
+                              onPressed: () => deleteTask(task.id),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
                   },
                 ),
-              );
-            }).toList(),
+              ),
+            ],
           );
         },
       ),
@@ -212,6 +336,7 @@ class _TodaAppState extends State<TodaApp> {
         onPressed: () {
           addTodoHandle(context);
         },
+        backgroundColor: const Color.fromARGB(255, 61, 109, 60),
         child: const Icon(Icons.add),
       ),
     );
